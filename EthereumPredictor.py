@@ -225,3 +225,152 @@ plt.show()
 plt.hist(eth_df['residual'], bins=50)
 plt.title('Histogram of Residuals')
 plt.show()
+
+# Import additional libraries for advanced features
+import requests
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from sklearn.decomposition import PCA
+from prophet.diagnostics import cross_validation, performance_metrics
+import seaborn as sns
+
+# Fetch real-time cryptocurrency news and perform sentiment analysis
+def fetch_crypto_news():
+    url = 'https://newsapi.org/v2/everything?q=cryptocurrency&apiKey=YOUR_NEWSAPI_KEY'
+    response = requests.get(url)
+    news_data = response.json()
+    articles = news_data['articles']
+    return articles
+
+def analyze_sentiment(articles):
+    analyzer = SentimentIntensityAnalyzer()
+    sentiments = []
+    for article in articles:
+        sentiment = analyzer.polarity_scores(article['title'])
+        sentiments.append(sentiment['compound'])
+    avg_sentiment = np.mean(sentiments)
+    return avg_sentiment
+
+# Incorporate sentiment analysis as an additional feature in the dataset
+articles = fetch_crypto_news()
+sentiment_score = analyze_sentiment(articles)
+eth_df['sentiment'] = sentiment_score
+df['sentiment'] = sentiment_score
+
+# Scale features before training the model
+scaler = MinMaxScaler()
+scaled_features = scaler.fit_transform(df[['y', 'sentiment']])
+df['scaled_y'] = scaled_features[:, 0]
+df['scaled_sentiment'] = scaled_features[:, 1]
+
+# Feature Engineering: Add Rolling Statistics
+eth_df['rolling_mean_30'] = eth_df['Open'].rolling(window=30).mean()
+eth_df['rolling_std_30'] = eth_df['Open'].rolling(window=30).std()
+
+# Principal Component Analysis (PCA) for dimensionality reduction
+pca = PCA(n_components=1)
+eth_df['pca_component'] = pca.fit_transform(scaled_features)
+
+# Retrain Prophet model with additional regressors and PCA component
+m = Prophet(
+    seasonality_mode="multiplicative",
+    yearly_seasonality=True,
+    weekly_seasonality=True,
+    daily_seasonality=False,
+    changepoint_prior_scale=best_params[0],
+    seasonality_prior_scale=best_params[1]
+)
+m.add_regressor('sentiment')
+m.add_regressor('pca_component')
+m.add_regressor('rolling_mean_30')
+m.add_regressor('rolling_std_30')
+m.fit(train_df)
+
+# Update forecast with new features
+future = m.make_future_dataframe(periods=365)
+future['sentiment'] = sentiment_score
+future['pca_component'] = pca.transform(scaler.transform(future[['y', 'sentiment']]))[:, 0]
+future['rolling_mean_30'] = eth_df['rolling_mean_30']
+future['rolling_std_30'] = eth_df['rolling_std_30']
+forecast = m.predict(future)
+plot_plotly(m, forecast)
+
+# Cross-validation for model performance evaluation
+cv_results = cross_validation(m, initial='730 days', period='180 days', horizon='365 days')
+performance_df = performance_metrics(cv_results)
+print(performance_df.head())
+
+# Visualizing Cross-Validation Results
+fig = plot_cross_validation_metric(cv_results, metric='rmse')
+plt.show()
+
+# Additional Evaluation Metrics
+mape = np.mean(np.abs((test_df['y'] - test_forecast['yhat']) / test_df['y'])) * 100
+print(f'Mean Absolute Percentage Error (MAPE): {mape}%')
+
+# Enhanced Visualizations: Correlation Heatmap
+correlation_matrix = eth_df.corr()
+plt.figure(figsize=(12, 8))
+sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm')
+plt.title('Correlation Heatmap of Ethereum Features')
+plt.show()
+
+# Time-Series Decomposition for Trend, Seasonality, and Residuals
+from statsmodels.tsa.seasonal import seasonal_decompose
+decompose_result = seasonal_decompose(eth_df['Open'], model='multiplicative', period=365)
+decompose_result.plot()
+plt.show()
+
+# Implement a custom ensemble method by combining predictions from Prophet and a simple ARIMA model
+from statsmodels.tsa.arima.model import ARIMA
+
+# Train ARIMA model on the same data
+arima_model = ARIMA(train_df['y'], order=(5, 1, 0))
+arima_model_fit = arima_model.fit()
+
+# Generate forecasts with ARIMA
+arima_forecast = arima_model_fit.forecast(steps=len(test_df))
+
+# Combine Prophet and ARIMA predictions
+ensemble_forecast = (forecast['yhat'][:len(test_df)] + arima_forecast) / 2
+
+# Evaluate the ensemble model
+ensemble_rmse = np.sqrt(mean_squared_error(test_df['y'], ensemble_forecast))
+print(f'Ensemble Model RMSE: {ensemble_rmse}')
+
+# Visualize ensemble forecast versus actual
+plt.figure(figsize=(10, 5))
+plt.plot(test_df['ds'], test_df['y'], label='Actual')
+plt.plot(test_df['ds'], ensemble_forecast, label='Ensemble Forecast')
+plt.title('Ensemble Model: Prophet + ARIMA')
+plt.legend()
+plt.show()
+
+# Model Retraining on Full Data for Deployment
+m_final = Prophet(
+    seasonality_mode="multiplicative",
+    yearly_seasonality=True,
+    weekly_seasonality=True,
+    daily_seasonality=False,
+    changepoint_prior_scale=best_params[0],
+    seasonality_prior_scale=best_params[1]
+)
+m_final.add_regressor('sentiment')
+m_final.add_regressor('pca_component')
+m_final.add_regressor('rolling_mean_30')
+m_final.add_regressor('rolling_std_30')
+m_final.fit(df)  # Fit on full dataset
+final_future = m_final.make_future_dataframe(periods=365)
+final_future['sentiment'] = sentiment_score
+final_future['pca_component'] = pca.transform(scaler.transform(final_future[['y', 'sentiment']]))[:, 0]
+final_future['rolling_mean_30'] = eth_df['rolling_mean_30']
+final_future['rolling_std_30'] = eth_df['rolling_std_30']
+final_forecast = m_final.predict(final_future)
+
+# Final Visualizations and Export
+plot_plotly(m_final, final_forecast)
+plot_components_plotly(m_final, final_forecast)
+
+# Export final model and forecast for deployment
+joblib.dump(m_final, 'final_prophet_eth_model.pkl')
+final_forecast.to_csv('final_eth_forecast.csv', index=False)
