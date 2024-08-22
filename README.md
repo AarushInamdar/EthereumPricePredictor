@@ -1,6 +1,6 @@
 # Ethereum Price Predictor
 
-![Project Banner](./ethpredictor_banner.png)
+<img width="1122" alt="Screenshot 2024-08-21 at 11 57 18 PM" src="https://github.com/user-attachments/assets/932e23d8-6e8a-4ceb-9721-cf0a8fde44ba">
 
 ## 📈 Project Overview
 
