@@ -1,6 +1,6 @@
 # Ethereum Price Predictor
 
-![Project Banner](./assets/ethpredictor_banner.png)
+![Project Banner](./ethpredictor_banner.png)
 
 ## 📈 Project Overview
 
